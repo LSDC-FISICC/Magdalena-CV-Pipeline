@@ -1,0 +1,16 @@
+ros2 run ndvi_surco1 nocheyndvi --ros-args -r image:=/camera/camera/color/image_raw -r image2:=/camera/camera/infra2/image_rect_raw  -r out:=/camera/proceso -r out2:=/camera/estado
+ros2 run ndvi_surco1 nocheyndvi --ros-args -r image:=/camera1/camera1/color/image_raw -r image2:=/camera1/camera1/infra2/image_rect_raw  -r out:=/camera1/proceso -r out2:=/camera1/estado
+ros2 run ndvi_surco1 nocheyndvi --ros-args -r image:=/camera2/camera2/color/image_raw -r image2:=/camera2/camera2/infra2/image_rect_raw  -r out:=/camera2/proceso -r out2:=/camera2/estado
+ros2 run ndvi_surco1 nocheyndvi --ros-args -r image:=/camera3/camera3/color/image_raw -r image2:=/camera3/camera3/infra2/image_rect_raw  -r out:=/camera3/proceso -r out2:=/camera3/estado
+ros2 run ndvi_surco1 nocheyndvi --ros-args -r image:=/camera4/camera4/color/image_raw -r image2:=/camera4/camera4/infra2/image_rect_raw  -r out:=/camera4/proceso -r out2:=/camera4/estado
+
+ros2 run ndvi_surco1 nocheyndvi --ros-args -r image:=/realsense/D555_353522302286_Color -r image2:=/realsense/D555_353522302286_Infrared_2 -r out:=/camera/process1 -r out2:=/camera/state1
+ros2 run ndvi_surco1 nocheyndvi --ros-args -r image:=/realsense/D555_419222301921_Color -r image2:=/realsense/D555_419222301921_Infrared_2 -r out:=/camera/process2 -r out2:=/camera/state2
+
+IP            s/n           default topic name                       new topic names
+-------------|-------------|-----------------------------------|--------------------------------
+192.168.11.55 419222301921  /realsense/D555_419222301921_Color  /camera55/color /camera55/infra2
+192.168.11.56 353522302286  /realsense/D555_353522302286_Color  /camera56/color /camera56/infra2
+192.168.11.57 409122301544  /realsense/D555_409122301544_Color  /camera57/color /camera57/infra2
+192.168.11.58 408222300679  /realsense/D555_408222300679_Color  /camera58/color /camera58/infra2
+192.168.11.59 353522301659  /realsense/D555_353522301659_Color  /camera59/color /camera59/infra2

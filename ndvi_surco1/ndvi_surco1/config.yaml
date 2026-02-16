@@ -1,0 +1,5 @@
+threshold: 0.05
+topicorgb: '/camera/camera/color/image_raw'
+topicoinfra: '/camera/camera/infra2/image_rect_raw'
+publisher: '/camera/color/image_raw'
+
