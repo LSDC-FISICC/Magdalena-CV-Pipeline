@@ -1,7 +1,17 @@
-"""@package docstring
-The computer vision pipeline for NDVI generation in agricultural monitoring.
-This node synchronizes RGB and infrared image streams, processes them to compute the NDVI index, and publishes the results for further analysis.
-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
+"""NDVI Computer Vision Pipeline Module.
+
+A ROS 2 node that implements a computer vision pipeline for NDVI (Normalized Difference
+Vegetation Index) generation in agricultural monitoring. The node synchronizes RGB and
+infrared image streams from multiple sensors, processes them to compute the NDVI index,
+and publishes the results for further analysis.
+
+Key functionalities:
+    - Synchronizes RGB and infrared image streams from multiple cameras
+    - Applies region of interest (ROI) extraction from images
+    - Computes NDVI from RGB and infrared channels
+    - Performs color-based masking for vegetation detection
+    - Monitors camera connection status using lsusb
+    - Publishes processed NDVI images and state metrics
 """
 import rclpy
 from rclpy.node import Node
@@ -49,20 +59,32 @@ CAMERAS = {
 }
 
 def cargar_configuracion(archivo):
+    """Load configuration from a YAML file.
+
+    Args:
+        archivo (str): Path to the YAML configuration file.
+
+    Returns:
+        dict: Configuration parameters loaded from the YAML file.
+    """
     with open(archivo, "r") as f:
         return yaml.safe_load(f)
 
 config = cargar_configuracion("/home/jetson/ros2_ws/src/Magdalena---Pipeline/ndvi_surco1/ndvi_surco1/config.yaml")
 
 def image_roi(image, roi):
-    """
-    Applies a perspective transform to extract the region of interest (ROI) from the image.
+    """Extract region of interest (ROI) from an image using array indexing.
+
+    Crops the input image to the specified rectangular region defined by the ROI
+    coordinates.
 
     Args:
-      image: Input image.
-      roi: Coordinates of the region of interest.
+        image (np.ndarray): Input image as a 2D or 3D numpy array.
+        roi (np.ndarray): ROI coordinates in shape (1, 4, 2). Extracts coordinates
+            from roi[0,0] (top-left) and roi[0,2] (bottom-right) for cropping.
+
     Returns:
-      warped_img: The transformed image focusing on the ROI.
+        np.ndarray: Cropped image containing only the region of interest.
     """
     x = int(roi[0,0,0])
     y = int(roi[0,0,1])
@@ -76,13 +98,17 @@ def image_roi(image, roi):
 
 
 def maska(pimage):
-    """
-    Applies a mask to filter pixel values within a specific range.
-    
+    """Create a binary mask to identify vegetation based on HSV color range.
+
+    Converts the BGR image to HSV color space and applies a threshold to identify
+    pixels within a specific hue-saturation-value range. Used for vegetation detection.
+
     Args:
-      pimage: Input processed image.
+        pimage (np.ndarray): Input image in BGR format.
+
     Returns:
-      mask_mean: Normalized mean of the masked image.
+        np.ndarray: Binary mask where vegetation pixels are white (255) and background
+            pixels are black (0).
     """
     lower_bound = np.array([35, 40, 100])
     upper_bound = np.array([85, 255, 255])
@@ -96,14 +122,18 @@ def maska(pimage):
 
 
 
-def promed(pimage,mask):
-    """
-    Applies a mask to filter pixel values within a specific range.
-    
+def promed(pimage, mask):
+    """Calculate the mean value of masked pixels in an image.
+
+    Applies a binary mask to an image and computes the mean pixel value of the
+    masked region. Used to calculate the average NDVI value for vegetation.
+
     Args:
-      pimage: Input processed image.
+        pimage (np.ndarray): Input image (typically NDVI image).
+        mask (np.ndarray): Binary mask where 255 indicates pixels to include.
+
     Returns:
-      mask_mean: Normalized mean of the masked image.
+        float: Mean pixel value of the masked region.
     """
     segmented_image = cv2.bitwise_and(pimage, pimage, mask=mask)
     mask_mean = np.mean(segmented_image)
@@ -111,14 +141,20 @@ def promed(pimage,mask):
 
 
 
-def ndvi_generator3(bgr,infra):
-    """
-    Computes the NDVI (Normalized Difference Vegetation Index) from RGB and infrared images.
+def ndvi_generator3(bgr, infra):
+    """Compute the Normalized Difference Vegetation Index (NDVI) from RGB and infrared images.
+
+    Calculates NDVI using the formula: (NIR - RED) / (NIR + RED), where NIR is from
+    the infrared channel and RED is from the RGB red channel. The result is normalized
+    to [0, 1] range and colorized using the RdYlGn colormap.
+
     Args:
-      bgr: RGB image in BGR format.
-      infra: Infrared image.
+        bgr (np.ndarray): Input image in BGR format (from RGB sensor).
+        infra (np.ndarray): Input image from infrared sensor (NIR channel).
+
     Returns:
-      NDVI-based masked image.
+        np.ndarray: Colorized NDVI image in BGR format with green indicating high
+            vegetation index and red indicating low vegetation index.
     """
     rgb_image = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     red_channel = rgb_image[:, :, 0].astype(np.float32)
@@ -139,7 +175,17 @@ def ndvi_generator3(bgr,infra):
 
 
 class MultiTopicSync(Node):
+    """ROS 2 Node for synchronized NDVI processing from multiple sensors.
+
+    Subscribes to RGB and infrared image streams, synchronizes them, processes
+    to compute NDVI, and publishes results. Monitors camera connection status.
+    """
+
     def __init__(self):
+        """Initialize the MultiTopicSync ROS 2 node.
+
+        Sets up parameters, subscribers, publishers, and timers for camera monitoring.
+        """
         super().__init__('multi_topic_sync')
         self.bridge = CvBridge()
         self.declare_parameter('camera_rgb_topic', 'image')
@@ -180,7 +226,15 @@ class MultiTopicSync(Node):
         self.timer = self.create_timer(1.0, self.check_all_cameras)
 
     def get_connected_serials(self):
-        #Obtiene todos los seriales de dispositivos Intel RealSense usando lsusb.
+        """Retrieve serial numbers of connected Intel RealSense cameras.
+
+        Uses the lsusb command to query connected USB devices and extracts the
+        serial numbers of Intel RealSense cameras (vendor ID 8086).
+
+        Returns:
+            list: Serial numbers of connected RealSense cameras, or empty list if
+                  command fails.
+        """
         try:
             result = subprocess.run(
                 ["lsusb", "-v", "-d", "8086:"],
@@ -203,6 +257,11 @@ class MultiTopicSync(Node):
             return []
 
     def check_all_cameras(self):
+        """Monitor and log the connection status of all configured cameras.
+
+        Checks each camera in the CAMERAS dictionary against the list of connected
+        devices and logs whether each camera is currently connected or disconnected.
+        """
         connected_serials = self.get_connected_serials()
 
         for cam_name, serial in CAMERAS.items():
@@ -230,16 +289,21 @@ class MultiTopicSync(Node):
 
 
 
-    def synced_callback(self, rgb_msg,infra_msg):
-        """
-        Processes synchronized RGB and infrared images, calculates NDVI,
-        and publishes the results.
+    def synced_callback(self, rgb_msg, infra_msg):
+        """Process synchronized RGB and infrared images to compute and publish NDVI.
+
+        Extracts the region of interest from both image streams, computes the NDVI
+        index, applies vegetation masking, and publishes the results. The state
+        (1.0 or 0.0) is determined by comparing the NDVI mean against a threshold.
 
         Args:
-          rgb_msg: Synchronized RGB image message.
-          infra_msg: Synchronized infrared image message. 
-        Returns:
-          None
+            rgb_msg (sensor_msgs.msg.Image): Synchronized RGB image message.
+            infra_msg (sensor_msgs.msg.Image): Synchronized infrared image message.
+
+        Publishes:
+            Image: Processed RGB image with ROI rectangle overlay (green if vegetation
+                detected, red otherwise).
+            Float32: State metric (1.0 if NDVI exceeds threshold, 0.0 otherwise).
         """
         
         self.last_msg_time = time.time() ##CAMARA DESCONECTADA
@@ -317,6 +381,14 @@ class MultiTopicSync(Node):
             self.get_logger().error(f"Error calculando NDVI: {e}")
 
 def main(args=None):
+    """Entry point for the NDVI ROS 2 node.
+
+    Initializes the ROS 2 system, creates the MultiTopicSync node, and spins
+    to process incoming image messages. Handles graceful shutdown on interrupt.
+
+    Args:
+        args: Optional command-line arguments passed to rclpy.init().
+    """
     #GPIO.setmode(GPIO.BOARD)
     #GPIO.setup(led_pin, GPIO.OUT, initial=GPIO.LOW)
     #GPIO.setup(led_pin2, GPIO.OUT, initial=GPIO.LOW)
