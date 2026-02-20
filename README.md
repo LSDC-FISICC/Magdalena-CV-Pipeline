@@ -1,4 +1,4 @@
-# Magdalena Pipeline
+# Magdalena CV Pipeline
 
 ## Overview
 
