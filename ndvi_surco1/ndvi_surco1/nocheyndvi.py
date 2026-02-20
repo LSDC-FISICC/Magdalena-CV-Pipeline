@@ -52,7 +52,7 @@ def cargar_configuracion(archivo):
     with open(archivo, "r") as f:
         return yaml.safe_load(f)
 
-config = cargar_configuracion("/home/orin30/ros2_ws/src/ndvi_surco1/ndvi_surco1/config.yaml")
+config = cargar_configuracion("/home/jetson/ros2_ws/src/Magdalena---Pipeline/ndvi_surco1/ndvi_surco1/config.yaml")
 
 def image_roi(image, roi):
     """
@@ -296,7 +296,7 @@ class MultiTopicSync(Node):
               
               #self.archivo.write("0,"+ str(dt.strftime("%Y-%m-%d %H:%M:%S.%f")) + "," +str(self.fps) +"\n")
               cv2.polylines(bgr_image, [the_vertices_30cm], isClosed=True, color=(0, 0, 255), thickness=5)
-             
+            
             
 
             else:
