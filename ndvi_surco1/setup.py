@@ -1,6 +1,11 @@
 from setuptools import setup
+import glob
+import os
 
 package_name = 'ndvi_surco1'
+
+def _package_files(glob_pattern):
+    return [p for p in glob.glob(glob_pattern)]
 
 setup(
     name=package_name,
@@ -9,9 +14,8 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/ament_python', ['resource/ndvi_surco1']),
         ('share/' + package_name, ['package.xml']),
-       
-        
-
+        ('share/' + package_name + '/launch', _package_files('launch/*.py')),
+        ('share/' + package_name + '/config', _package_files('*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
