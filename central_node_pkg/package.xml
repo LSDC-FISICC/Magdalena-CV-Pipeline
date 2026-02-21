@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>central_node_pkg</name>
+  <version>0.0.0</version>
+  <description>Nodo central que se suscribe a varios tópicos y publica cada 10 ms.</description>
+
+  <maintainer email="orin30@example.com">orin30</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- Solo buildtool para Python -->
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <!-- Dependencias de runtime -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- Tipo de build -->
+  <build_type>ament_python</build_type>
+</package>
+
