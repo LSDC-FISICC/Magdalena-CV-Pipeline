@@ -1,130 +1,253 @@
-# Magdalena CV Pipeline
+# Fertilizer Control System
+
+A ROS2 package for automated fertilizer application control using multiple RealSense D435i cameras to detect plant presence and block/allow fertilizer flow accordingly.
 
 ## Overview
 
-The Magdalena Pipeline is a ROS 2-based system for **NDVI (Normalized Difference Vegetation Index) analysis and monitoring** using Intel RealSense cameras. This pipeline captures multispectral imagery from RealSense depth and RGB cameras to compute vegetation indices for agricultural and environmental monitoring applications.
+This system uses computer vision to monitor crop rows via infrared and color imaging from multiple RealSense cameras. It automatically controls fertilizer application by calculating the Normalized Difference Vegetation Index (NDVI) to determine plant presence, then sending control signals via Modbus TCP to fertilizer distribution equipment.
 
-### Key Components
+## Features
 
-- **ndvi_surco1**: Main ROS 2 package for NDVI processing and analysis
-- **realsense-ros**: ROS 2 wrapper for Intel RealSense cameras (depth and RGB sensors)
-- **vision_opencv**: Integration layer between OpenCV and ROS 2 for image processing
+- **Multi-camera Support**: Handles up to 5+ simultaneous RealSense D435i cameras
+- **NDVI-based Plant Detection**: Computes NDVI (Normalized Difference Vegetation Index) from infrared and color images
+- **Alternative Index Support**: Can also use EGX (Excess Green Index) for testing
+- **Modbus TCP Control**: Interfaces with fertilizer control hardware via Modbus TCP
+- **ROI Processing**: Crops and processes specific Regions of Interest (ROI) from camera feeds
+- **Dynamic Configuration**: All parameters configurable via YAML without recompilation
+- **Automatic Respawning**: Nodes automatically respawn on failure
 
-### Use Cases
+## System Architecture
 
-- Real-time vegetation health monitoring
-- Precision agriculture analysis
-- Environmental crop assessment
-- Plant growth tracking and analysis
+The system follows a ROS2 nodelet pattern with the following data flow:
 
----
+```
+RealSense Camera (Color + Infrared)
+    ↓
+Processing Pipeline (ROI Cropping)
+    ↓
+NDVI Threshold (Index Calculation & Thresholding)
+    ↓
+Modbus Controller (Hardware Control)
+    ↓
+Fertilizer Equipment
+```
 
-## Building the Workspace
+### Key Nodes
+
+1. **RealSense Camera Nodes** (`realsense2_camera`)
+   - Publishes color and infrared image streams
+   - One node per connected camera
+
+2. **Processing Pipeline Node** (`processing_pipeline`)
+   - Subscribes to color and infrared images
+   - Crops Region of Interest (ROI) based on config
+   - Supports optional infrared-to-color alignment (static or dynamic via RANSAC)
+   - Publishes cropped `/roi` and `/infra_roi` topics
+
+3. **NDVI Threshold Node** (`ndvi_threshold`)
+   - Subscribes to cropped color and infrared images
+   - Computes NDVI or EGX index
+   - Applies threshold to determine plant presence
+   - Publishes binary decision (0.0 or 1.0) on `/threshold` topic
+   - Publishes NDVI visualization as colormap image
+
+4. **Modbus Controller Node** (`modbus_controller`)
+   - Subscribes to all `/threshold1` through `/threshold5` topics
+   - Writes control commands to Modbus TCP device
+   - Only accepts strict 0.0 or 1.0 values
+
+## Installation
 
 ### Prerequisites
 
-Ensure you have the following installed:
-- **ROS 2** (verify with `ros2 --version`)
-- **colcon** build tool:
-  ```bash
-  sudo apt install python3-colcon-common-extensions
-  ```
+- Ubuntu 20.04 LTS or later
+- ROS2 Humble
+- Python 3.8+
 
-### Build Steps
+### Dependencies
 
-1. **Navigate to your workspace root:**
-   ```bash
-   cd ~/ros2_ws
-   ```
-
-2. **Source the ROS 2 environment** (if not already done):
-   ```bash
-   source /opt/ros/<distro>/setup.bash
-   ```
-   Replace `<distro>` with your ROS 2 distribution (e.g., `humble`, `iron`, `jazzy`)
-
-3. **Install system dependencies** (first time only):
-   ```bash
-   rosdep install --from-paths src --ignore-src -r -y
-   ```
-
-4. **Build the entire workspace:**
-   ```bash
-   colcon build
-   ```
-
-5. **Source the build environment:**
-   ```bash
-   source install/setup.bash
-   ```
-
-### Build Specific Packages
-
-If you only want to build certain packages:
+Install system dependencies:
 ```bash
-# Build only the NDVI package
-colcon build --packages-select ndvi_surco1
-
-# Build only the RealSense wrapper
-colcon build --packages-select realsense2_camera
-
-# Build OpenCV components
-colcon build --packages-select cv_bridge
+sudo apt update
+sudo apt install python3-colcon-common-extensions python3-rosdep
+sudo rosdep install -i --from-path src --rosdistro humble -y
 ```
 
-### Verification
-
-After successful build, you should see the following directories in your workspace root:
-- `build/` - Intermediate build files
-- `install/` - Installation directory with executables and libraries
-- `log/` - Build logs
-
----
-
-## Running the Pipeline
-
-After building and sourcing the setup script:
+### Build
 
 ```bash
-# Launch the RealSense camera node and NDVI processing
-ros2 launch ndvi_surco1 rs_launch.py
+cd ~/ros2_ws
+colcon build --packages-select fertilizer --symlink-install
+source install/setup.bash
 ```
 
-For additional launch options, refer to the individual package documentation in their respective directories.
+## Configuration
 
----
+Edit `config/config.yaml` to customize:
+
+## Running
+
+### Launch All Nodes
+
+```bash
+ros2 launch fertilizer launch_nodes.py
+```
+
+This automatically launches:
+- All configured RealSense cameras
+- Processing pipeline for each camera
+- NDVI threshold node for each camera
+- Single Modbus controller node
+
+### Run Individual Nodes
+
+```bash
+# Processing pipeline
+ros2 run fertilizer processing_pipeline
+
+# NDVI threshold computation
+ros2 run fertilizer ndvi_threshold
+
+# Modbus controller
+ros2 run fertilizer modbus_controller
+```
+
+## Topics
+
+### Input Topics (RealSense)
+- `/camera1/color/raw` (sensor_msgs/Image) - Color image
+- `/camera1/infra2/image_rect_raw` (sensor_msgs/Image) - Infrared image
+
+### Processing Topics
+- `/camera1/roi` (sensor_msgs/Image) - Cropped color image
+- `/camera1/infra_roi` (sensor_msgs/Image) - Cropped infrared image
+
+### Output Topics
+- `/ndvi1` (std_msgs/Float32) - NDVI value [0.0, 1.0]
+- `/ndvi` (sensor_msgs/Image) - NDVI visualization with colormap
+- `/threshold1` (std_msgs/Float32) - Binary decision (0.0 or 1.0)
 
 ## Project Structure
 
 ```
-Magdalena---Pipeline/
-├── ndvi_surco1/          # Main NDVI processing package
-├── realsense-ros/        # Intel RealSense camera drivers
-├── vision_opencv/        # OpenCV-ROS integration
-└── README.md             # This file
+fertilizer/
+├── config/
+│   └── config.yaml              # Configuration file
+├── fertilizer/
+│   ├── __init__.py
+│   ├── modbus_controller.py     # Modbus TCP interface node
+│   ├── ndvi_threshold.py        # NDVI calculation & thresholding
+│   ├── processing_pipeline.py   # ROI extraction & alignment
+│   └── __pycache__/
+├── launch/
+│   └── launch_nodes.py          # ROS2 launch file
+├── resource/
+│   └── fertilizer               # Package marker
+├── test/
+│   ├── test_copyright.py        # Copyright test
+│   ├── test_flake8.py           # Code style test
+│   └── test_pep257.py           # Docstring test
+├── LICENSE                      # GPL-3.0-only
+├── package.xml                  # ROS2 package descriptor
+├── README.md                    # This file
+├── setup.cfg                    # Setup configuration
+└── setup.py                     # Package setup script
 ```
 
----
+## Module Details
 
-## Requirements
+### processing_pipeline.py
 
-- Intel RealSense camera (D435, D455, or compatible)
-- Linux system (Ubuntu 20.04+)
-- ROS 2 (Foxy, Humble, Iron, or Jazzy)
-- Python 3.8+
-- OpenCV
-- librealsense2 SDK
+Handles image preprocessing:
+- Subscribes to RealSense color and infrared streams
+- Applies optional infrared-to-color alignment (static or dynamic)
+- Crops a Region of Interest (ROI) based on configuration
+- Publishes cropped images for downstream processing
+- Uses approximate time synchronization to align camera frames
 
----
+Key function:
+- `get_roi_dimensions()` - Calculates ROI size in pixels based on camera height and physical dimensions using trigonometry
+
+### ndvi_threshold.py
+
+Computes vegetation indices and thresholding:
+- Subscribes to cropped color and infrared images
+- Calculates NDVI: `(NIR - RED) / (NIR + RED)` or EGX: `(2 * GREEN) - (RED + BLUE)`
+- Applies configurable threshold
+- Publishes binary decision (1.0 if vegetation detected, 0.0 otherwise)
+- Publishes NDVI/EGX as colormap visualization (RdYlGn-like)
+
+### modbus_controller.py
+
+Modbus TCP interface:
+- Subscribes to `/threshold1` through `/threshold5` topics
+- Maintains persistent connection to Modbus TCP server
+- Writes strictly binary values (0.0 or 1.0) to coils 0-4
+- Handles connection errors gracefully
+- Loads configuration from YAML with fallback paths
+
+## Dependencies
+
+### ROS2 Packages
+- `rclpy` - ROS2 Python client library
+- `std_msgs` - Standard message types
+- `sensor_msgs` - Image message types
+- `cv_bridge` - OpenCV/ROS bridge
+- `launch` - ROS2 launch system
+- `launch_ros` - ROS2 launch utilities
+- `realsense2_camera` - RealSense driver
+
+### Python Packages
+- `opencv_python` - Computer vision library
+- `numpy` - Numerical computing
+- `pyyaml` - YAML configuration
+- `pyModbusTCP` - Modbus TCP client library
+- `message_filters` - ROS2 message synchronization
+
+### Testing
+- `pytest` - Testing framework
+- `ament_copyright` - Copyright checker
+- `ament_flake8` - PEP8 style linter
+- `ament_pep257` - Docstring checker
+
+## Testing
+
+Run tests:
+```bash
+cd ~/ros2_ws
+colcon test --packages-select fertilizer
+```
+
+## Troubleshooting
+
+### Config File Not Found
+The system searches for `config.yaml` in multiple locations:
+1. Relative to package installation
+2. `~/ros2_ws/src/fertilizer/config/config.yaml`
+3. `/home/jetson/ros2_ws/src/fertilizer/config/config.yaml`
+4. `/root/ros2_ws/src/fertilizer/config/config.yaml`
+
+### Modbus Connection Failed
+- Verify Modbus server is running at the configured host:port
+- Check firewall rules allow TCP 502 (or configured port)
+- Verify network connectivity: `ping 192.168.11.60`
+
+### No Camera Frames
+- Check RealSense serial numbers in config match connected devices
+- Verify USB power and bandwidth availability
+- Run `realsense-viewer` to test camera connectivity
+
+### NDVI Values All Zero
+- Verify infrared image is being published
+- Check alignment matrix if enabled
+- Ensure adequate IR illumination in environment
 
 ## License
 
-See individual package licenses (typically Apache 2.0 and BSD for ROS packages)
+GPL-3.0-only
 
----
+See LICENSE file for details.
 
-## Notes
+## Maintainer
 
-- Ensure your RealSense camera is properly connected and recognized by `realsense-viewer` before running the pipeline
-- Camera calibration parameters are recommended for accurate NDVI computation
-- See `commandos-ips-serialnumbers.txt` in the ndvi_surco1 directory for device configuration information
+LSDC (lsdc@galileo.edu)

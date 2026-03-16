@@ -1,7 +1,0 @@
-central_node:
-  ros__parameters:
-    sensor1_topic: "/camera/proceso"
-    sensor2_topic: "/sensor2"
-    output_topic: "/central_data"
-    publish_period_ms: 10.0   # 10 ms = 100 Hz
-
