@@ -95,9 +95,7 @@ class ModbusController(Node):
     def _make_cb(self, coil_index: int):
         """Generate a callback bound to a particular coil index.
 
-        The returned callback checks that the incoming message is exactly
-        ``0.0`` or ``1.0`` and writes the corresponding boolean value to
-        the Modbus coil.  Non‑conforming values are logged and ignored.
+        The returned callback checks the incoming message and writes the corresponding boolean value to the Modbus coil, based on threshold.
         """
 
         def cb(msg: Float32):
