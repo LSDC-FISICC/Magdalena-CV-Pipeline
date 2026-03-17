@@ -1,6 +1,6 @@
 # Fertilizer Control System
 
-A ROS2 package for automated fertilizer application control using multiple RealSense D435i cameras to detect plant presence and block/allow fertilizer flow accordingly.
+A ROS2 package for automated fertilizer application control using multiple RealSense D555 cameras to detect plant presence and block/allow fertilizer flow accordingly.
 
 ## Overview
 
@@ -8,7 +8,7 @@ This system uses computer vision to monitor crop rows via infrared and color ima
 
 ## Features
 
-- **Multi-camera Support**: Handles up to 5+ simultaneous RealSense D435i cameras
+- **Multi-camera Support**: Handles up to 5+ simultaneous RealSense D555 cameras
 - **NDVI-based Plant Detection**: Computes NDVI (Normalized Difference Vegetation Index) from infrared and color images
 - **Alternative Index Support**: Can also use EGX (Excess Green Index) for testing
 - **Modbus TCP Control**: Interfaces with fertilizer control hardware via Modbus TCP
@@ -48,13 +48,13 @@ Fertilizer Equipment
    - Subscribes to cropped color and infrared images
    - Computes NDVI or EGX index
    - Applies threshold to determine plant presence
-   - Publishes binary decision (0.0 or 1.0) on `/threshold` topic
+   - Publishes selected Index value in `/threshold` topic
    - Publishes NDVI visualization as colormap image
 
 4. **Modbus Controller Node** (`modbus_controller`)
    - Subscribes to all `/threshold1` through `/threshold5` topics
-   - Writes control commands to Modbus TCP device
-   - Only accepts strict 0.0 or 1.0 values
+   - Writes control commands to Modbus TCP device based on index
+
 
 ## Installation
 
@@ -83,7 +83,7 @@ source install/setup.bash
 
 ## Configuration
 
-Edit `config/config.yaml` to customize:
+Edit `config/config.yaml` to customize params.
 
 ## Running
 
@@ -217,30 +217,6 @@ Run tests:
 cd ~/ros2_ws
 colcon test --packages-select fertilizer
 ```
-
-## Troubleshooting
-
-### Config File Not Found
-The system searches for `config.yaml` in multiple locations:
-1. Relative to package installation
-2. `~/ros2_ws/src/fertilizer/config/config.yaml`
-3. `/home/jetson/ros2_ws/src/fertilizer/config/config.yaml`
-4. `/root/ros2_ws/src/fertilizer/config/config.yaml`
-
-### Modbus Connection Failed
-- Verify Modbus server is running at the configured host:port
-- Check firewall rules allow TCP 502 (or configured port)
-- Verify network connectivity: `ping 192.168.11.60`
-
-### No Camera Frames
-- Check RealSense serial numbers in config match connected devices
-- Verify USB power and bandwidth availability
-- Run `realsense-viewer` to test camera connectivity
-
-### NDVI Values All Zero
-- Verify infrared image is being published
-- Check alignment matrix if enabled
-- Ensure adequate IR illumination in environment
 
 ## License
 
