@@ -48,7 +48,10 @@ def launch_setup(context: LaunchContext) -> List[Action]:
     """
 
     # Load configuration
-    config_path = '/home/jetson/ros2_ws/src/fertilizer/config/config.yaml'
+    nodes: List[Action] = []
+    user = os.getenv('USER', 'unknown')
+    nodes.append(LogInfo(msg=f"[Fertilizer] Starting launch setup for user: {user}"))
+    config_path = f'/home/{user}/ros2_ws/src/fertilizer/config/config.yaml'
     config_path_abs = os.path.abspath(config_path)
     try:
         config = load_config(config_path_abs)
@@ -62,7 +65,7 @@ def launch_setup(context: LaunchContext) -> List[Action]:
     if n <= 0:
         return [LogInfo(msg="[ERROR] n must be > 0 in config.yaml")]
 
-    nodes: List[Action] = []
+    
 
     # Extract global RealSense parameters
     fps = rs_config.get('fps', 15)
