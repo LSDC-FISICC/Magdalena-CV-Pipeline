@@ -1,5 +1,5 @@
 #amount of fertilizer channels (coils) to control via modbus
-n: 2
+n: 5
 
 
 # Realsense camera configurations
@@ -27,34 +27,19 @@ realsense:
 respawn: true
 respawn_delay: 5
 
-# Region of Interest (ROI) for NDVI calculation. Defined as a rectangle with top-left corner (x, y) and width w and height h.
-roi:
-  w: 50
-  h: 19 #deberia ser 30
-
-# Optional infrared‑to‑color alignment.  Provide a 3×3 homography that
-# transforms a pixel in the infra image into the corresponding location in
-# the color image.  This can be calculated offline with RealSense tools or
-# derived from camera intrinsics/extrinsics.  Enable with `enabled: true`.
-alignment:
-  enabled: false            # set false to disable alignment
-  dynamic: false           # set true to compute matrix each frame via RANSAC
-#  matrix:
-#    - [0.9831507938138508, 0.12790548763982962, -23.771485967610094]
-#    - [-0.0011711747631751497, 1.0532434875127477, -7.306811121913817]
-#    - [7.450940389429025e-06, 0.0001266612145956316, 1.0]
-
-
-# NDVI threshold for plant detection. Publish 1.0 if NDVI avg > threshold, else 0.0
-egx_threshold: 0.501
-threshold: 0.02
-
 # Modbus TCP server settings
 modbus:
   host: "192.168.11.60"
   port: 502
   auto_open: true
+  debounce_time : 500000 # minimum accepted time between the change of coil values
 
-index: "ndvi" #can also be "egx" for testing with EGX index instead of NDVI
+  camera_map :
+    camera1 : 0
+    camera2 : 1
+    camera3 : 2
+    camera4 : 3
+    camera5 : 5
+
 
 

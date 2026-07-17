@@ -1,10 +1,12 @@
 import os
+import time
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
 import yaml
 from pyModbusTCP.client import ModbusClient
+from diagnostic_msgs.msg import DiagnosticArray
 
 
 class ModbusController(Node):
@@ -70,6 +72,11 @@ class ModbusController(Node):
         auto_open = modb_cfg.get('auto_open', True)
         self.threshold = cfg.get('threshold', 0)
 
+        self.camera_map = modb_cfg.get('camera_map', {})
+        if not self.camera_map:
+            self.get_logger().warn(
+                'No camera_map found in config.yaml, coils will not be written')
+
         # instantiate Modbus client; try opening once
         self.client = ModbusClient(host=host, port=port, auto_open=auto_open)
         try:
@@ -77,54 +84,74 @@ class ModbusController(Node):
         except Exception as ex:
             self.get_logger().error(f'Unable to open Modbus connection: {ex}')
 
-        # subscribers for five NDVI topics
-        for idx in range(5):
-            topic = f'threshold{idx + 1}'
-            self.create_subscription(
-                Float32, topic, self._make_cb(idx), 10)
-
-        # Explicitly log subscribed topics
-        self.get_logger().info('ModbusController: Subscribed topics:' + 
-                               ''.join([f' /threshold{idx+1}' for idx in range(5)]))
-        self.get_logger().info('ModbusController initialized')
-
-        #send true to coils 0-4 to open fertilizer flow at startup
-        self.client.write_multiple_coils(0, [True] * 5)
+        #anti bounce to protect the valves
+        self.debounce = modb_cfg.get('debounce_time', 500_000)
+        self.last_change = {}
+        self.last_val = {}
 
 
-    def _make_cb(self, coil_index: int):
-        """Generate a callback bound to a particular coil index.
 
-        The returned callback checks the incoming message and writes the corresponding boolean value to the Modbus coil, based on threshold.
-        """
+        self.create_subscription(
+            DiagnosticArray, '/detection/Trigger', self._detection_cb, 10)
 
-        def cb(msg: Float32):
-            """
-            binarize input:
-            """
-            if msg.data < self.threshold:
-                coil_val = False
-            else:
-                coil_val = True
-            
-            last_val = self.client.read_coils(coil_index, 1)
-            try:
-                # write_single_coil expects a boolean
-                self.client.write_single_coil(coil_index, coil_val)
-            except Exception as ex:
+        self.get_logger().info('ModbusController: Subscribed to /detection/Trigger')
+
+        #send true to coils 1-5 to open fertilizer flow at startup
+        if self.camera_map:
+            n_coils = max(self.camera_map.values())
+            self.client.write_multiple_coils(0, [True] * n_coils)
+
+        self.get_logger().info('ModbusController initialised')
+
+
+    def _detection_cb(self, msg: DiagnosticArray):
+        for status in msg.status:
+            topic_name = status.name
+            camera_name = topic_name.split('/')[1]
+            coil_index = self.camera_map.get(camera_name)
+
+            if coil_index is None:
                 self.get_logger().error(
-                    f'Failed writing coil {coil_index}: {ex}')
-            #log only trigger changes to avoid spamming logs
+                    f'Unknown camera_name "{camera_name}", no coil mapping, skipping')
+                continue
+
+            # extract the prediction's value
+            coil_val = None
+            for kv in status.values:
+                if kv.key == 'plant_detected':
+                    coil_val = (kv.value == 'true')
+                    break
+
+            if coil_val is None:
+                self.get_logger().error(
+                    f'No plant_detected key for camera "{camera_name}", skipping')
+                continue
+
+            last_val = self.last_val.get(coil_index, 0)
+
+            now_time = time.monotonic_ns()
+            last_time = self.last_change.get(coil_index, 0)
+            elapsed_time = (now_time - last_time)/1000
+
+            if elapsed_time < self.debounce and last_val != coil_val :
+                self.get_logger().info(f'Change didn t apply for Coil {coil_index} because the last change is too recent, last_val = {last_val}, actual_val = {coil_val}')
+                continue
+
+
+            try:
+                self.client.write_single_coil(coil_index, coil_val)
+                self.get_logger().info(
+                    f'Coil {coil_index} ({camera_name}) set to {coil_val} from {last_val}')
+            except Exception as ex:
+                self.get_logger().error(f'Failed writing coil {coil_index}: {ex}')
+                continue
+
+            if last_val != coil_val:
+                self.get_logger().info(
+                    f'Coil {coil_index} ({camera_name}) set to {coil_val}')
             
-            if last_val is not None:
-                if coil_val != last_val[0]:
-                    self.get_logger().info(
-                        f'Coil {coil_index} set to {coil_val} based on input {msg.data}')
-            else:
-                self.get_logger().error(f'Failed to read back coil {coil_index} after writing')
-
-
-        return cb
+            self.last_change[coil_index]=now_time
+            self.last_val[coil_index]=coil_val
 
 
 def main(args=None):
