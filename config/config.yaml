@@ -1,9 +1,15 @@
-#amount of fertilizer channels (coils) to control via modbus
+# ==============================================================================
+# GLOBAL SYSTEM CONFIGURATION
+# ==============================================================================
+
+# Total number of fertilizer channels (coils) to control
 n: 5
 
-
-# Realsense camera configurations
+# ------------------------------------------------------------------------------
+# Intel RealSense Camera Configurations
+# ------------------------------------------------------------------------------
 realsense:
+  # Unique hardware serial numbers for each camera device
   camera1:
     serial: "419222301921"
   camera2:
@@ -14,6 +20,8 @@ realsense:
     serial: "408222300679"
   camera5:
     serial: "353522301659"
+  
+  # Video stream capture settings
   fps: 15
   color_res:
     x: 640
@@ -21,25 +29,36 @@ realsense:
   infrared_res:
     x: 640
     y: 360
+  
+  # Enable TTY terminal emulation for serial communication
   emulate_tty: true
 
-#ros2 launch configurations
+# ------------------------------------------------------------------------------
+# ROS 2 Launch Configurations
+# ------------------------------------------------------------------------------
+# Automatically restart nodes if they crash unexpectedly
 respawn: true
+# Delay (in seconds) before attempting to restart a crashed node
 respawn_delay: 5
 
-# Modbus TCP server settings
+# ------------------------------------------------------------------------------
+# Modbus TCP Server Settings
+# ------------------------------------------------------------------------------
 modbus:
   host: "192.168.11.60"
   port: 502
+  
+  # Automatically open connection on startup
   auto_open: true
-  debounce_time : 500000 # minimum accepted time between the change of coil values
+  
+  # Debounce time in microseconds (minimum accepted interval between coil state changes)
+  debounce_time : 500000 
 
+  # Mapping of cameras to their respective Modbus registers/coils
   camera_map :
     camera1 : 0
     camera2 : 1
     camera3 : 2
     camera4 : 3
     camera5 : 5
-
-
 
