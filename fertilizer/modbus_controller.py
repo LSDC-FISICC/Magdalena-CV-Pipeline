@@ -171,11 +171,11 @@ class ModbusController(Node):
 
            
             if last_val != coil_val:
+                self.last_change[coil_index]=now_time
                 self.get_logger().info(
                     f'Coil {coil_index} ({camera_name}) set to {coil_val}')
                 
             # Update history states for the next callback execution
-            self.last_change[coil_index]=now_time
             self.last_val[coil_index]=coil_val
 
 
