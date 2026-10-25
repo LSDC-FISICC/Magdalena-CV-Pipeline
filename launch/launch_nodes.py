@@ -12,8 +12,15 @@ def load_config(config_path: str) -> Dict[str, Any]:
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def generate_launch_description() : 
+def launch_setup(context: LaunchContext) -> List[Action]:
+    """Build the node list for the perception pipeline chosen by `perception`.
 
+    perception (launch argument, else config.yaml):
+      yolo  -> cv_inference cameraNode + inference_node
+      index -> processing_pipeline + ndvi_threshold per camera (NDVI or ExG masks)
+      both  -> both; valve_source picks the one that drives the valves, the other
+               only publishes its decisions so both can be logged on the same frames
+    """
     nodes = []
     # ----------------------------------------------------------------------
     # Configuration Path & File Parsing
@@ -24,14 +31,24 @@ def generate_launch_description() :
     try:
         config = load_config(config_path_abs)
     except Exception as e:
-        return LaunchDescription([LogInfo(msg=f"[FATAL] Error loading config from {config_path_abs}: {e}")])
+        return [LogInfo(msg=f"[FATAL] Error loading config from {config_path_abs}: {e}")]
 
     # Get number of cameras/Coil (default 5)
     n = config.get('n', 5)
     rs_config = config.get('realsense', {})
 
     if n <= 0:
-        return LaunchDescription([LogInfo(msg="[ERROR] n must be > 0 in config.yaml")])
+        return [LogInfo(msg="[ERROR] n must be > 0 in config.yaml")]
+
+    perception = LaunchConfiguration('perception').perform(context) or config.get('perception', 'yolo')
+    valve_source = LaunchConfiguration('valve_source').perform(context) or config.get('valve_source', perception)
+    if perception not in ('yolo', 'index', 'both'):
+        return [LogInfo(msg=f"[ERROR] perception must be yolo, index or both (got {perception})")]
+    if perception != 'both':
+        valve_source = perception  # only one pipeline runs: it drives the valves
+    if valve_source not in ('yolo', 'index'):
+        return [LogInfo(msg=f"[ERROR] valve_source must be yolo or index (got {valve_source})")]
+    nodes.append(LogInfo(msg=f"[Fertilizer] perception={perception}, valves driven by {valve_source}"))
 
     
     # ----------------------------------------------------------------------
@@ -90,45 +107,91 @@ def generate_launch_description() :
         nodes.append(camera)
 
     # ----------------------------------------------------------------------
-    # Core System Processing, Inference & Controller Nodes
+    # YOLO26 pipeline: one batch of all cameras -> /detection/Trigger
     # ----------------------------------------------------------------------
+    if perception in ('yolo', 'both'):
+        # Image preprocessing worker node
+        nodes.append(Node(
+            package = 'cv_inference',
+            executable = 'cameraNode',
+            name = 'camera_process_node',
+            output = 'screen',
+            respawn=respawn,
+            respawn_delay=respawn_delay,
+            emulate_tty=emulate_tty,
+            #additional_env={'LD_PRELOAD': '/lib/x86_64-linux-gnu/libpthread.so.0'},
+        ))
+        # YOLO AI classification inference node
+        nodes.append(Node(
+            package = 'cv_inference',
+            executable = 'inference_node',
+            name = 'Yolo_InferenceNode_v2',
+            output = 'screen',
+            respawn=respawn,
+            respawn_delay=respawn_delay,
+            emulate_tty=emulate_tty,
+        ))
 
-    # Image preprocessing worker node
-    cameraNode = Node(
-        package = 'cv_inference', 
-        executable = 'cameraNode', 
-        name = 'camera_process_node',
+    # ----------------------------------------------------------------------
+    # Index pipeline: ROI crop + NDVI/ExG threshold per camera -> /threshold<i>
+    # ----------------------------------------------------------------------
+    if perception in ('index', 'both'):
+        for i in range(1, n + 1):
+            camera_name = f'camera{i}'
+            camera_ns = camera_name
+            nodes.append(Node(
+                package='fertilizer',
+                executable='processing_pipeline',
+                namespace=camera_ns,
+                name='processing_pipeline',
+                parameters=[{
+                    'color_topic': f'/{camera_ns}/{camera_name}/color/image_raw',
+                    'infra_topic': f'/{camera_ns}/{camera_name}/infra2/image_rect_raw',
+                    'color_output_topic': f'/{camera_ns}/{camera_name}/roi',
+                    'infra_output_topic': f'/{camera_ns}/{camera_name}/infra_roi',
+                }],
+                respawn=respawn,
+                respawn_delay=respawn_delay,
+                emulate_tty=emulate_tty,
+            ))
+            nodes.append(Node(
+                package='fertilizer',
+                executable='ndvi_threshold',
+                namespace=camera_ns,
+                name='ndvi_threshold',
+                parameters=[{
+                    'roi_topic': f'/{camera_ns}/{camera_name}/roi',
+                    'infra_roi_topic': f'/{camera_ns}/{camera_name}/infra_roi',
+                    'threshold_output_topic': f'/threshold{i}',
+                    'ndvi_output_topic': f'/{camera_ns}/{camera_name}/ndvi{i}',
+                }],
+                respawn=respawn,
+                respawn_delay=respawn_delay,
+                emulate_tty=emulate_tty,
+            ))
+
+    # ----------------------------------------------------------------------
+    # Valves controller node: listens to the pipeline chosen by valve_source
+    # ----------------------------------------------------------------------
+    nodes.append(Node(
+        package = 'fertilizer',
+        executable = 'modbus_controller',
+        name = 'modbus_controller',
         output = 'screen',
+        parameters=[{'source': valve_source}],
         respawn=respawn,
         respawn_delay=respawn_delay,
         emulate_tty=emulate_tty,
-        #additional_env={'LD_PRELOAD': '/lib/x86_64-linux-gnu/libpthread.so.0'},
-    )
+    ))
 
-    # YOLO AI Object Detection Inference node
-    inference_node = Node(
-        package = 'cv_inference', 
-        executable = 'inference_node', 
-        name = 'Yolo_InferenceNode_v2',
-        output = 'screen',
-        respawn=respawn,
-        respawn_delay=respawn_delay,
-        emulate_tty=emulate_tty,
-    )
+    return nodes
 
-    # Valves controller Node
-    fertilizer_node = Node(
-        package = 'fertilizer', 
-        executable = 'modbus_controller', 
-        name = 'modbus_controller', 
-        output = 'screen',
-        respawn=respawn,
-        respawn_delay=respawn_delay,
-        emulate_tty=emulate_tty,
-    )
-    # Append core infrastructure to the execution stack
-    nodes.append(cameraNode)
-    nodes.append(inference_node)
-    nodes.append(fertilizer_node)
 
-    return LaunchDescription(nodes)
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument('perception', default_value='',
+                              description='yolo | index | both (default: config.yaml)'),
+        DeclareLaunchArgument('valve_source', default_value='',
+                              description='yolo | index, used with perception:=both (default: config.yaml)'),
+        OpaqueFunction(function=launch_setup),
+    ])

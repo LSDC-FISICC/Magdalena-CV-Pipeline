@@ -26,6 +26,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'processing_pipeline = fertilizer.processing_pipeline:main',
+            'ndvi_threshold = fertilizer.ndvi_threshold:main',
             'modbus_controller = fertilizer.modbus_controller:main',
         ],
     },

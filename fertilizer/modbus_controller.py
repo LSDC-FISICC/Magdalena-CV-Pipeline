@@ -12,9 +12,16 @@ from diagnostic_msgs.msg import DiagnosticArray
 class ModbusController(Node):
     """ROS 2 Node that bridges vision detection triggers to a Modbus TCP device.
 
-    It subscribes to the ``/detection/Trigger`` topic (``DiagnosticArray``), 
-    extracts plant detection status for each camera, and updates the corresponding 
-    Modbus coils to control physical valves.
+    The valve decisions come from one perception pipeline, chosen by the ``source``
+    parameter (default: ``valve_source`` in config.yaml):
+
+    * ``yolo``: the ``/detection/Trigger`` topic (``DiagnosticArray``) of the YOLO26
+      inference node, one status per camera with a ``plant_detected`` key;
+    * ``index``: the ``/threshold<i>`` topics (``Float32``, 1.0 = plant) of the
+      NDVI/colour-index nodes, ``i`` being the camera number.
+
+    Each decision updates the Modbus coil of its camera (``camera_map``) through the
+    same debounce, so both pipelines drive the valves identically.
 
     Connection and mapping parameters are loaded from the package's ``config.yaml``.
     """
@@ -103,15 +110,24 @@ class ModbusController(Node):
         # ROS 2 Subscriptions & Initialization Actions
         # ----------------------------------------------------------------------
 
-        self.create_subscription(
-            DiagnosticArray, '/detection/Trigger', self._detection_cb, 10)
+        self.source = self.declare_parameter('source', cfg.get('valve_source', 'yolo')).value
+        if self.source == 'index':
+            for camera_name in self.camera_map:
+                topic = f'/threshold{camera_name.removeprefix("camera")}'
+                self.create_subscription(Float32, topic, self._make_index_cb(camera_name), 10)
+                self.get_logger().info(f'ModbusController: {camera_name} <- {topic}')
+        else:
+            self.create_subscription(
+                DiagnosticArray, '/detection/Trigger', self._detection_cb, 10)
+            self.get_logger().info('ModbusController: Subscribed to /detection/Trigger')
 
-        self.get_logger().info('ModbusController: Subscribed to /detection/Trigger')
-
-        #send true to coils 1-5 to open fertilizer flow at startup
+        # Start coils 0..max(camera_map) in "apply" (True) and record it, so the debounce
+        # starts from the real valve state. Writing only 0..max-1 skipped the highest
+        # mapped coil (camera5 -> coil 5), which started in "return".
         if self.camera_map:
-            n_coils = max(self.camera_map.values())
+            n_coils = max(self.camera_map.values()) + 1
             self.client.write_multiple_coils(0, [True] * n_coils)
+            self.last_val.update({coil: True for coil in range(n_coils)})
 
         # Heartbeat for the PLC watchdog: the PLC releases every valve to its
         # de-energised (apply) state when this coil stops toggling.
@@ -138,66 +154,70 @@ class ModbusController(Node):
 
 
     def _detection_cb(self, msg: DiagnosticArray):
-        """Callback to process incoming diagnostics and update Modbus coils."""
+        """YOLO decisions: one status per camera with a ``plant_detected`` key."""
         for status in msg.status:
-            topic_name = status.name
             # Extract camera name from topic string (e.g., "/camera1/features" -> "camera1")
-            camera_name = topic_name.split('/')[1]
-            coil_index = self.camera_map.get(camera_name)
-
-            if coil_index is None:
-                self.get_logger().error(
-                    f'Unknown camera_name "{camera_name}", no coil mapping, skipping')
-                continue
-
-            # Extract the target detection boolean value
+            camera_name = status.name.split('/')[1]
             coil_val = None
             for kv in status.values:
                 if kv.key == 'plant_detected':
                     coil_val = (kv.value == 'true')
                     break
-
             if coil_val is None:
                 self.get_logger().error(
                     f'No plant_detected key for camera "{camera_name}", skipping')
                 continue
+            self._set_coil(camera_name, coil_val)
 
-            # ------------------------------------------------------------------
-            # Debounce Logic (Hardware Protection)
-            # ------------------------------------------------------------------
-            last_val = self.last_val.get(coil_index, 0)
+    def _make_index_cb(self, camera_name):
+        """Index decisions: ndvi_threshold publishes 1.0 (plant) or 0.0 per frame."""
+        def cb(msg: Float32):
+            self._set_coil(camera_name, msg.data > 0.5)
+        return cb
 
-            now_time = time.monotonic_ns()
-            last_time = self.last_change.get(coil_index, 0)
+    def _set_coil(self, camera_name, coil_val):
+        """Write one camera's decision to its coil, honouring the debounce."""
+        coil_index = self.camera_map.get(camera_name)
+        if coil_index is None:
+            self.get_logger().error(
+                f'Unknown camera_name "{camera_name}", no coil mapping, skipping')
+            return
 
-            # Convert elapsed time from nanoseconds to microseconds
-            elapsed_time = (now_time - last_time)/1000
+        # ------------------------------------------------------------------
+        # Debounce Logic (Hardware Protection)
+        # ------------------------------------------------------------------
+        last_val = self.last_val.get(coil_index, 0)
 
-            # Reject requested state change if it happens faster than the debounce limit
-            if elapsed_time < self.debounce and last_val != coil_val :
-                self.get_logger().info(f'Change didn t apply for Coil {coil_index} because the last change is too recent, last_val = {last_val}, actual_val = {coil_val}')
-                continue
-            
-            # ------------------------------------------------------------------
-            # Modbus Output Write
-            # ------------------------------------------------------------------
+        now_time = time.monotonic_ns()
+        last_time = self.last_change.get(coil_index, 0)
 
-            try:
-                self.client.write_single_coil(coil_index, coil_val)
-                self.get_logger().info(
-                    f'Coil {coil_index} ({camera_name}) set to {coil_val} from {last_val}')
-            except Exception as ex:
-                self.get_logger().error(f'Failed writing coil {coil_index}: {ex}')
-                continue
+        # Convert elapsed time from nanoseconds to microseconds
+        elapsed_time = (now_time - last_time)/1000
 
-           
-            if last_val != coil_val:
-                self.last_change[coil_index]=now_time
-                self.get_logger().info(
-                    f'Coil {coil_index} ({camera_name}) set to {coil_val}')
-                
-            # Update history states for the next callback execution
-            self.last_val[coil_index]=coil_val
+        # Reject requested state change if it happens faster than the debounce limit
+        if elapsed_time < self.debounce and last_val != coil_val :
+            self.get_logger().info(f'Change didn t apply for Coil {coil_index} because the last change is too recent, last_val = {last_val}, actual_val = {coil_val}')
+            return
+
+        # ------------------------------------------------------------------
+        # Modbus Output Write
+        # ------------------------------------------------------------------
+
+        try:
+            self.client.write_single_coil(coil_index, coil_val)
+            self.get_logger().info(
+                f'Coil {coil_index} ({camera_name}) set to {coil_val} from {last_val}')
+        except Exception as ex:
+            self.get_logger().error(f'Failed writing coil {coil_index}: {ex}')
+            return
+
+        if last_val != coil_val:
+            self.last_change[coil_index]=now_time
+            self.get_logger().info(
+                f'Coil {coil_index} ({camera_name}) set to {coil_val}')
+
+        # Update history states for the next callback execution
+        self.last_val[coil_index]=coil_val
 
 
 def main(args=None):

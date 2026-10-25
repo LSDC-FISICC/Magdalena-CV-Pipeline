@@ -74,14 +74,22 @@ Edit `config/config.yaml` to customize params.
 ### Launch All Nodes
 
 ```bash
-ros2 launch fertilizer launch_nodes.py
+ros2 launch fertilizer launch_nodes.py                      # perception from config.yaml (default: yolo)
+ros2 launch fertilizer launch_nodes.py perception:=index    # NDVI / ExG index masks only
+ros2 launch fertilizer launch_nodes.py perception:=both valve_source:=yolo
 ```
 
-This automatically launches:
-- All configured RealSense cameras
-- Processing pipeline for each camera
-- NDVI threshold node for each camera
-- Single Modbus controller node
+This launches all configured RealSense cameras, one single Modbus controller node and the
+perception pipeline selected by `perception`:
+
+| `perception` | Nodes | Decisions |
+|---|---|---|
+| `yolo` | `cv_inference` `cameraNode` + `inference_node` (YOLO26 classifier, one batch of all cameras) | `/detection/Trigger` |
+| `index` | `processing_pipeline` + `ndvi_threshold` per camera (`index: ndvi` or `egx` in config.yaml) | `/threshold<i>` |
+| `both` | both pipelines on the same frames | both topics |
+
+With `both`, `valve_source` (`yolo` or `index`) chooses the pipeline that drives the valves;
+the other one only publishes, so the two can be logged and compared on identical frames.
 
 ### Run Individual Nodes
 
