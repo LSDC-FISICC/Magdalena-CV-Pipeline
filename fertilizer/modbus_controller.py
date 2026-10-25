@@ -1,31 +1,33 @@
 import os
+import time
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Float32
 import yaml
 from pyModbusTCP.client import ModbusClient
+from diagnostic_msgs.msg import DiagnosticArray
 
 
 class ModbusController(Node):
-    """Node that bridges NDVI topics to a Modbus TCP device.
+    """ROS 2 Node that bridges vision detection triggers to a Modbus TCP device.
 
-    It subscribes to ``/ndvi1`` through ``/ndvi5`` (``Float32``) and
-    writes the value to coils 0-4 on a Modbus server.  Only strict
-    ``0.0`` or ``1.0`` values are accepted; other numbers are ignored.
+    It subscribes to the ``/detection/Trigger`` topic (``DiagnosticArray``), 
+    extracts plant detection status for each camera, and updates the corresponding 
+    Modbus coils to control physical valves.
 
-    The connection parameters are read from ``config/config.yaml`` of
-    the ``fertilizer`` package under the ``modbus`` key.
+    Connection and mapping parameters are loaded from the package's ``config.yaml``.
     """
 
     def __init__(self):
         super().__init__('modbus_controller')
 
-        # load configuration file from package's config directory
-        # Try multiple locations to find config.yaml
+        # ----------------------------------------------------------------------
+        # Configuration File Loading
+        # ----------------------------------------------------------------------
         cfg_path = None
         
-        # Try abspath based on current file location
+        # Strategy 1: Look for config relative to the current script location
         potential_path = os.path.abspath(os.path.join(
             os.path.dirname(__file__),
             '..',
@@ -35,13 +37,13 @@ class ModbusController(Node):
         if os.path.exists(potential_path):
             cfg_path = potential_path
         
-        # Try home-based path
+        # Strategy 2 : Try home-based path
         if not cfg_path:
             home_path = os.path.expanduser('~/ros2_ws/src/fertilizer/config/config.yaml')
             if os.path.exists(home_path):
                 cfg_path = home_path
         
-        # Try common paths
+        # Strategy 3 : Try common paths
         if not cfg_path:
             common_paths = [
                 '/home/jetson/ros2_ws/src/fertilizer/config/config.yaml',
@@ -51,7 +53,8 @@ class ModbusController(Node):
                 if os.path.exists(path):
                     cfg_path = path
                     break
-        
+
+        # Parse YAML file if found, otherwise initialize empty config
         if not cfg_path:
             self.get_logger().error('Could not find config.yaml in any expected location')
             cfg = {}
@@ -63,12 +66,27 @@ class ModbusController(Node):
                 self.get_logger().error(f'Failed to read config file {cfg_path}: {e}')
                 cfg = {}
 
+        # ----------------------------------------------------------------------
+        # Parameter Initialization
+        # ----------------------------------------------------------------------
+
         modb_cfg = cfg.get('modbus', {})
 
         host = modb_cfg.get('host', '192.168.11.60')
         port = modb_cfg.get('port', 502)
         auto_open = modb_cfg.get('auto_open', True)
         self.threshold = cfg.get('threshold', 0)
+
+
+        # Map camera names to Modbus coil indices
+        self.camera_map = modb_cfg.get('camera_map', {})
+        if not self.camera_map:
+            self.get_logger().warn(
+                'No camera_map found in config.yaml, coils will not be written')
+            
+        # ----------------------------------------------------------------------
+        # Modbus Client Setup
+        # ----------------------------------------------------------------------
 
         # instantiate Modbus client; try opening once
         self.client = ModbusClient(host=host, port=port, auto_open=auto_open)
@@ -77,54 +95,109 @@ class ModbusController(Node):
         except Exception as ex:
             self.get_logger().error(f'Unable to open Modbus connection: {ex}')
 
-        # subscribers for five NDVI topics
-        for idx in range(5):
-            topic = f'threshold{idx + 1}'
-            self.create_subscription(
-                Float32, topic, self._make_cb(idx), 10)
+        # Valve protection: Debounce configuration tracker (in microseconds)
+        self.debounce = modb_cfg.get('debounce_time', 500_000)
+        self.last_change = {}
+        self.last_val = {}
+        # ----------------------------------------------------------------------
+        # ROS 2 Subscriptions & Initialization Actions
+        # ----------------------------------------------------------------------
 
-        # Explicitly log subscribed topics
-        self.get_logger().info('ModbusController: Subscribed topics:' + 
-                               ''.join([f' /threshold{idx+1}' for idx in range(5)]))
-        self.get_logger().info('ModbusController initialized')
+        self.create_subscription(
+            DiagnosticArray, '/detection/Trigger', self._detection_cb, 10)
 
-        #send true to coils 0-4 to open fertilizer flow at startup
-        self.client.write_multiple_coils(0, [True] * 5)
+        self.get_logger().info('ModbusController: Subscribed to /detection/Trigger')
+
+        #send true to coils 1-5 to open fertilizer flow at startup
+        if self.camera_map:
+            n_coils = max(self.camera_map.values())
+            self.client.write_multiple_coils(0, [True] * n_coils)
+
+        # Heartbeat for the PLC watchdog: the PLC releases every valve to its
+        # de-energised (apply) state when this coil stops toggling.
+        self.heartbeat_coil = modb_cfg.get('heartbeat_coil')
+        self.heartbeat = False
+        if self.heartbeat_coil is not None:
+            period_s = modb_cfg.get('heartbeat_period_ms', 200) / 1000
+            self.create_timer(period_s, self._heartbeat_cb)
+
+        self.get_logger().info('ModbusController initialised')
+
+    def _heartbeat_cb(self):
+        """Toggle the heartbeat coil; a failed write is retried on the next tick."""
+        self.heartbeat = not self.heartbeat
+        err = ''
+        try:
+            # pyModbusTCP returns None/False instead of raising when the write fails
+            ok = self.client.write_single_coil(self.heartbeat_coil, self.heartbeat)
+        except Exception as ex:
+            ok, err = False, f' ({ex})'
+        if not ok:
+            self.get_logger().error(f'Heartbeat coil {self.heartbeat_coil} not written{err}: the PLC '
+                                    'watchdog will release the valves to apply', throttle_duration_sec=5.0)
 
 
-    def _make_cb(self, coil_index: int):
-        """Generate a callback bound to a particular coil index.
+    def _detection_cb(self, msg: DiagnosticArray):
+        """Callback to process incoming diagnostics and update Modbus coils."""
+        for status in msg.status:
+            topic_name = status.name
+            # Extract camera name from topic string (e.g., "/camera1/features" -> "camera1")
+            camera_name = topic_name.split('/')[1]
+            coil_index = self.camera_map.get(camera_name)
 
-        The returned callback checks the incoming message and writes the corresponding boolean value to the Modbus coil, based on threshold.
-        """
-
-        def cb(msg: Float32):
-            """
-            binarize input:
-            """
-            if msg.data < self.threshold:
-                coil_val = False
-            else:
-                coil_val = True
-            
-            last_val = self.client.read_coils(coil_index, 1)
-            try:
-                # write_single_coil expects a boolean
-                self.client.write_single_coil(coil_index, coil_val)
-            except Exception as ex:
+            if coil_index is None:
                 self.get_logger().error(
-                    f'Failed writing coil {coil_index}: {ex}')
-            #log only trigger changes to avoid spamming logs
+                    f'Unknown camera_name "{camera_name}", no coil mapping, skipping')
+                continue
+
+            # Extract the target detection boolean value
+            coil_val = None
+            for kv in status.values:
+                if kv.key == 'plant_detected':
+                    coil_val = (kv.value == 'true')
+                    break
+
+            if coil_val is None:
+                self.get_logger().error(
+                    f'No plant_detected key for camera "{camera_name}", skipping')
+                continue
+
+            # ------------------------------------------------------------------
+            # Debounce Logic (Hardware Protection)
+            # ------------------------------------------------------------------
+            last_val = self.last_val.get(coil_index, 0)
+
+            now_time = time.monotonic_ns()
+            last_time = self.last_change.get(coil_index, 0)
+
+            # Convert elapsed time from nanoseconds to microseconds
+            elapsed_time = (now_time - last_time)/1000
+
+            # Reject requested state change if it happens faster than the debounce limit
+            if elapsed_time < self.debounce and last_val != coil_val :
+                self.get_logger().info(f'Change didn t apply for Coil {coil_index} because the last change is too recent, last_val = {last_val}, actual_val = {coil_val}')
+                continue
             
-            if last_val is not None:
-                if coil_val != last_val[0]:
-                    self.get_logger().info(
-                        f'Coil {coil_index} set to {coil_val} based on input {msg.data}')
-            else:
-                self.get_logger().error(f'Failed to read back coil {coil_index} after writing')
+            # ------------------------------------------------------------------
+            # Modbus Output Write
+            # ------------------------------------------------------------------
 
+            try:
+                self.client.write_single_coil(coil_index, coil_val)
+                self.get_logger().info(
+                    f'Coil {coil_index} ({camera_name}) set to {coil_val} from {last_val}')
+            except Exception as ex:
+                self.get_logger().error(f'Failed writing coil {coil_index}: {ex}')
+                continue
 
-        return cb
+           
+            if last_val != coil_val:
+                self.last_change[coil_index]=now_time
+                self.get_logger().info(
+                    f'Coil {coil_index} ({camera_name}) set to {coil_val}')
+                
+            # Update history states for the next callback execution
+            self.last_val[coil_index]=coil_val
 
 
 def main(args=None):

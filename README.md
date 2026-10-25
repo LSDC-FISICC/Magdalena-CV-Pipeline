@@ -1,59 +1,43 @@
 # Fertilizer Control System
 
-A ROS2 package for automated fertilizer application control using multiple RealSense D555 cameras to detect plant presence and block/allow fertilizer flow accordingly.
+A ROS2 package for automated fertilizer application control using multiple Intel RealSense D555 cameras to detect plant presence and block/allow fertilizer flow accordingly.
 
 ## Overview
 
-This system uses computer vision to monitor crop rows via infrared and color imaging from multiple RealSense cameras. It automatically controls fertilizer application by calculating the Normalized Difference Vegetation Index (NDVI) to determine plant presence, then sending control signals via Modbus TCP to fertilizer distribution equipment.
+This system uses computer vision and deep learning (YOLO) to monitor crop rows via multiple RealSense cameras. It automatically controls fertilizer application by analyzing incoming plant detection triggers and sending hardware control commands via Modbus TCP to physical distribution valves.
 
 ## Features
 
-- **Multi-camera Support**: Handles up to 5+ simultaneous RealSense D555 cameras
-- **NDVI-based Plant Detection**: Computes NDVI (Normalized Difference Vegetation Index) from infrared and color images
-- **Alternative Index Support**: Can also use EGX (Excess Green Index) for testing
-- **Modbus TCP Control**: Interfaces with fertilizer control hardware via Modbus TCP
-- **ROI Processing**: Crops and processes specific Regions of Interest (ROI) from camera feeds
-- **Dynamic Configuration**: All parameters configurable via YAML without recompilation
-- **Automatic Respawning**: Nodes automatically respawn on failure
+- **Multi-camera Support**: Dynamically handles up to 5+ simultaneous RealSense D555 cameras based on configuration.
+- **YOLO-Driven Detection**: Integrates with a specialized inference pipeline for robust plant detection.
+- **Modbus TCP Control**: Interfaces with industrial fertilizer distribution hardware via `pyModbusTCP`.
+- **Hardware Protection (Debouncing)**: Features a software-level debounce mechanism (configured in microseconds) to protect physical valves from rapid, damaging state changes.
+- **Robust Configuration Fallbacks**: The controller automatically searches multiple path strategies to successfully locate its YAML configuration file across different environments (Jetson, Docker, local workspace).
+- **Automatic Respawning**: Critical camera nodes are configured within the launch system to automatically recover on failure.
+- **Preprocess input images**: Preprocess input image to adapt them for the Yolo arhcitecture
 
 ## System Architecture
 
-The system follows a ROS2 nodelet pattern with the following data flow:
-
-```
-RealSense Camera (Color + Infrared)
-    ↓
-Processing Pipeline (ROI Cropping)
-    ↓
-NDVI Threshold (Index Calculation & Thresholding)
-    ↓
-Modbus Controller (Hardware Control)
-    ↓
-Fertilizer Equipment
-```
+Intel RealSense D555 Cameras (Color + Infrared Streams)
+↓
+cv_inference / camera_process_node (Image Preprocessing)
+↓
+cv_inference / Yolo_InferenceNode_v2 (AI Object Detection)
+↓  [Published onto /detection/Trigger as DiagnosticArray]
+fertilizer / modbus_controller (Debounce Check & Register Mapping)
+↓  [Modbus TCP Commands]
+Physical Fertilizer Valves / Equipment
 
 ### Key Nodes
 
-1. **RealSense Camera Nodes** (`realsense2_camera`)
-   - Publishes color and infrared image streams
-   - One node per connected camera
+1. **Modbus Controller Node** (`modbus_controller`)
+   - Subscribes to the global `/detection/Trigger` topic.
+   - Parses the incoming `DiagnosticArray` to find `plant_detected` boolean statuses.
+   - Maps camera namespaces to target Modbus coils dynamically using `config.yaml`.
+   - Safely forces all fertilizer channels open (`True`) at startup to ensure baseline flow.
+   - Applies strict timing checks against `debounce_time` before letting a valve toggle.
 
-2. **Processing Pipeline Node** (`processing_pipeline`)
-   - Subscribes to color and infrared images
-   - Crops Region of Interest (ROI) based on config
-   - Supports optional infrared-to-color alignment (static or dynamic via RANSAC)
-   - Publishes cropped `/roi` and `/infra_roi` topics
-
-3. **NDVI Threshold Node** (`ndvi_threshold`)
-   - Subscribes to cropped color and infrared images
-   - Computes NDVI or EGX index
-   - Applies threshold to determine plant presence
-   - Publishes selected Index value in `/threshold` topic
-   - Publishes NDVI visualization as colormap image
-
-4. **Modbus Controller Node** (`modbus_controller`)
-   - Subscribes to all `/threshold1` through `/threshold5` topics
-   - Writes control commands to Modbus TCP device based on index
+*Note: Camera drivers (`realsense2_camera_node`) and vision pipelines (`cameraNode`, `inference_node`) are managed by their respective packages but are fully orchestrated by this package's launch configuration.*
 
 
 ## Installation
@@ -102,30 +86,17 @@ This automatically launches:
 ### Run Individual Nodes
 
 ```bash
-# Processing pipeline
-ros2 run fertilizer processing_pipeline
-
-# NDVI threshold computation
-ros2 run fertilizer ndvi_threshold
-
 # Modbus controller
 ros2 run fertilizer modbus_controller
 ```
 
-## Topics
+## Topics for the code of this specific package for cameraNode and Inference_Node go check cv_inference
 
-### Input Topics (RealSense)
-- `/camera1/color/raw` (sensor_msgs/Image) - Color image
-- `/camera1/infra2/image_rect_raw` (sensor_msgs/Image) - Infrared image
-
-### Processing Topics
-- `/camera1/roi` (sensor_msgs/Image) - Cropped color image
-- `/camera1/infra_roi` (sensor_msgs/Image) - Cropped infrared image
+### Input Topics (CameraNode)
+- `/detection/Trigger` (diagnostic_msgs/DiagnosticArray) - Contains statuses for active camera streams. The node scans for a key named plant_detected matching a string value of "true" or "false".
 
 ### Output Topics
-- `/ndvi1` (std_msgs/Float32) - NDVI value [0.0, 1.0]
-- `/ndvi` (sensor_msgs/Image) - NDVI visualization with colormap
-- `/threshold1` (std_msgs/Float32) - Binary decision (0.0 or 1.0)
+- `Modbus TCP Coils` (boolean) - Direct boolean writes (True / False) over the network to the configured host and port.
 
 ## Project Structure
 
@@ -136,9 +107,6 @@ fertilizer/
 ├── fertilizer/
 │   ├── __init__.py
 │   ├── modbus_controller.py     # Modbus TCP interface node
-│   ├── ndvi_threshold.py        # NDVI calculation & thresholding
-│   ├── processing_pipeline.py   # ROI extraction & alignment
-│   └── __pycache__/
 ├── launch/
 │   └── launch_nodes.py          # ROS2 launch file
 ├── resource/
@@ -155,27 +123,6 @@ fertilizer/
 ```
 
 ## Module Details
-
-### processing_pipeline.py
-
-Handles image preprocessing:
-- Subscribes to RealSense color and infrared streams
-- Applies optional infrared-to-color alignment (static or dynamic)
-- Crops a Region of Interest (ROI) based on configuration
-- Publishes cropped images for downstream processing
-- Uses approximate time synchronization to align camera frames
-
-Key function:
-- `get_roi_dimensions()` - Calculates ROI size in pixels based on camera height and physical dimensions using trigonometry
-
-### ndvi_threshold.py
-
-Computes vegetation indices and thresholding:
-- Subscribes to cropped color and infrared images
-- Calculates NDVI: `(NIR - RED) / (NIR + RED)` or EGX: `(2 * GREEN) - (RED + BLUE)`
-- Applies configurable threshold
-- Publishes binary decision (1.0 if vegetation detected, 0.0 otherwise)
-- Publishes NDVI/EGX as colormap visualization (RdYlGn-like)
 
 ### modbus_controller.py
 
