@@ -113,7 +113,28 @@ class ModbusController(Node):
             n_coils = max(self.camera_map.values())
             self.client.write_multiple_coils(0, [True] * n_coils)
 
+        # Heartbeat for the PLC watchdog: the PLC releases every valve to its
+        # de-energised (apply) state when this coil stops toggling.
+        self.heartbeat_coil = modb_cfg.get('heartbeat_coil')
+        self.heartbeat = False
+        if self.heartbeat_coil is not None:
+            period_s = modb_cfg.get('heartbeat_period_ms', 200) / 1000
+            self.create_timer(period_s, self._heartbeat_cb)
+
         self.get_logger().info('ModbusController initialised')
+
+    def _heartbeat_cb(self):
+        """Toggle the heartbeat coil; a failed write is retried on the next tick."""
+        self.heartbeat = not self.heartbeat
+        err = ''
+        try:
+            # pyModbusTCP returns None/False instead of raising when the write fails
+            ok = self.client.write_single_coil(self.heartbeat_coil, self.heartbeat)
+        except Exception as ex:
+            ok, err = False, f' ({ex})'
+        if not ok:
+            self.get_logger().error(f'Heartbeat coil {self.heartbeat_coil} not written{err}: the PLC '
+                                    'watchdog will release the valves to apply', throttle_duration_sec=5.0)
 
 
     def _detection_cb(self, msg: DiagnosticArray):
