@@ -54,6 +54,15 @@ modbus:
   # Debounce time in microseconds (minimum accepted interval between coil state changes)
   debounce_time : 500000 
 
+  # PLC watchdog heartbeat. When set, this coil is toggled every heartbeat_period_ms; the
+  # LOGO! program must AND every valve output with an off-delay timer (~1 s) retriggered by
+  # each heartbeat edge, so the valves fall back to their de-energised state (application
+  # open, return closed) if this node, the Jetson or the network stops. Leave it commented
+  # out until the coil address exists in the LOGO! program: writing an unused address may
+  # drive another output.
+  # heartbeat_coil : 10
+  # heartbeat_period_ms : 200
+
   # Mapping of cameras to their respective Modbus registers/coils
   camera_map :
     camera1 : 0
