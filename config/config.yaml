@@ -33,6 +33,11 @@ realsense:
   # Enable TTY terminal emulation for serial communication
   emulate_tty: true
 
+  # Optional staggered start: camera i starts (i-1)*startup_stagger_s seconds after launch.
+  # 0 (default) starts all cameras at once, as before. Try e.g. 5.0 if the USB 3.2 cameras
+  # fail to connect when started together.
+  startup_stagger_s: 0.0
+
 # ------------------------------------------------------------------------------
 # Perception pipeline
 # ------------------------------------------------------------------------------
