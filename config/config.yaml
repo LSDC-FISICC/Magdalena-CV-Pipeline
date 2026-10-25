@@ -34,6 +34,43 @@ realsense:
   emulate_tty: true
 
 # ------------------------------------------------------------------------------
+# Perception pipeline
+# ------------------------------------------------------------------------------
+# "yolo"  : YOLO26 classifier (cv_inference cameraNode + inference_node)
+# "index" : colour/NDVI index masks (processing_pipeline + ndvi_threshold per camera)
+# "both"  : both pipelines run on the same frames; valve_source decides which one drives
+#           the valves, the other is only published (/detection/Trigger or /threshold<i>)
+#           so the two can be compared on identical frames.
+# Both can be overridden at launch: ros2 launch fertilizer launch_nodes.py perception:=both
+perception: yolo
+valve_source: yolo
+
+# ------------------------------------------------------------------------------
+# Index pipeline (perception: index | both)
+# ------------------------------------------------------------------------------
+# Region of Interest (ROI) for NDVI calculation. Defined as a rectangle with top-left corner (x, y) and width w and height h.
+roi:
+  w: 50
+  h: 19 #deberia ser 30
+
+# Optional infrared-to-color alignment.  Provide a 3x3 homography that
+# transforms a pixel in the infra image into the corresponding location in
+# the color image.  Enable with `enabled: true`.
+alignment:
+  enabled: false            # set false to disable alignment
+  dynamic: false            # set true to compute matrix each frame via RANSAC
+#  matrix:
+#    - [0.9831507938138508, 0.12790548763982962, -23.771485967610094]
+#    - [-0.0011711747631751497, 1.0532434875127477, -7.306811121913817]
+#    - [7.450940389429025e-06, 0.0001266612145956316, 1.0]
+
+# Index thresholds: ndvi_threshold publishes 1.0 on /threshold<i> if the index average is
+# above the threshold, else 0.0
+egx_threshold: 0.501
+threshold: 0.02
+index: "ndvi" #can also be "egx" for testing with EGX index instead of NDVI
+
+# ------------------------------------------------------------------------------
 # ROS 2 Launch Configurations
 # ------------------------------------------------------------------------------
 # Automatically restart nodes if they crash unexpectedly
