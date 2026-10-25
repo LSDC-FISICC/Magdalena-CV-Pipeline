@@ -92,9 +92,10 @@ With `both`, `valve_source` (`yolo` or `index`) chooses the pipeline that drives
 the other one only publishes, so the two can be logged and compared on identical frames.
 
 **Cameras.** On the Jetson (reComputer J3011) the five D555 are connected over USB 3.2 and
-driven by `realsense2_camera`: they connect reliably only one at a time, so the launch starts
-camera *i* `(i-1) * realsense.startup_stagger_s` seconds after launch (default 5 s; tune it in
-config.yaml). Over PoE the J3011 network interface cannot keep up with five streams; PoE with the
+driven by `realsense2_camera`. If they fail to connect when started together, set
+`realsense.startup_stagger_s` in config.yaml (e.g. 5.0): camera *i* then starts
+`(i-1) * startup_stagger_s` seconds after launch. The default, 0, starts them all at once.
+Over PoE the J3011 network interface cannot keep up with five streams; PoE with the
 `magdalene_camera` driver (Magdalena-Camera repository) works on a laptop-class NIC.
 
 ### Run Individual Nodes

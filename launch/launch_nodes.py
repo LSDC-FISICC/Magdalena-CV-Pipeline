@@ -65,9 +65,9 @@ def launch_setup(context: LaunchContext) -> List[Action]:
     emulate_tty = rs_config.get('emulate_tty', True)
     respawn = rs_config.get('respawn', True)
     respawn_delay = rs_config.get('respawn_delay', 5)
-    # Seconds between camera starts. Over USB 3.2 the D555s connect reliably only one
-    # at a time; starting all five together fails. 0 starts them all at once.
-    stagger = float(rs_config.get('startup_stagger_s', 5.0))
+    # Optional seconds between camera starts (USB 3.2 cameras that fail to connect when
+    # started together); 0, the default, starts them all at once.
+    stagger = float(rs_config.get('startup_stagger_s', 0.0))
 
 
 
