@@ -1,6 +1,6 @@
 from launch import LaunchDescription , LaunchContext, Action
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, LogInfo
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, LogInfo, TimerAction
 from launch.substitutions import LaunchConfiguration
 from typing import List, Dict, Any
 import yaml
@@ -65,6 +65,9 @@ def launch_setup(context: LaunchContext) -> List[Action]:
     emulate_tty = rs_config.get('emulate_tty', True)
     respawn = rs_config.get('respawn', True)
     respawn_delay = rs_config.get('respawn_delay', 5)
+    # Seconds between camera starts. Over USB 3.2 the D555s connect reliably only one
+    # at a time; starting all five together fails. 0 starts them all at once.
+    stagger = float(rs_config.get('startup_stagger_s', 5.0))
 
 
 
@@ -104,7 +107,8 @@ def launch_setup(context: LaunchContext) -> List[Action]:
                 ('infra2/image_rect_raw', f'/{camera_ns}/{camera_name}/infra2/image_rect_raw'),
             ],
         )
-        nodes.append(camera)
+        # Camera i starts (i-1)*stagger seconds after launch
+        nodes.append(TimerAction(period=(i - 1) * stagger, actions=[camera]) if stagger > 0 and i > 1 else camera)
 
     # ----------------------------------------------------------------------
     # YOLO26 pipeline: one batch of all cameras -> /detection/Trigger
@@ -116,6 +120,9 @@ def launch_setup(context: LaunchContext) -> List[Action]:
             executable = 'cameraNode',
             name = 'camera_process_node',
             output = 'screen',
+            # Batch order = furrow order; the camera name in each topic (cameraN) selects
+            # the coil through modbus.camera_map.
+            parameters=[{'camera_topics': [f'/camera{i}/camera{i}/color/image_raw' for i in range(1, n + 1)]}],
             respawn=respawn,
             respawn_delay=respawn_delay,
             emulate_tty=emulate_tty,
@@ -127,6 +134,7 @@ def launch_setup(context: LaunchContext) -> List[Action]:
             executable = 'inference_node',
             name = 'Yolo_InferenceNode_v2',
             output = 'screen',
+            parameters=[{'max_batch_size': n}],
             respawn=respawn,
             respawn_delay=respawn_delay,
             emulate_tty=emulate_tty,

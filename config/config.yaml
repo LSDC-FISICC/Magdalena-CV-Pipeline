@@ -33,6 +33,11 @@ realsense:
   # Enable TTY terminal emulation for serial communication
   emulate_tty: true
 
+  # Seconds between camera starts (camera i starts (i-1)*startup_stagger_s after launch).
+  # The D555s are connected over USB 3.2 on the Jetson: they connect reliably one at a
+  # time, not all five together. Set 0 to start them all at once.
+  startup_stagger_s: 5.0
+
 # ------------------------------------------------------------------------------
 # Perception pipeline
 # ------------------------------------------------------------------------------
