@@ -68,6 +68,17 @@ def launch_setup(context: LaunchContext) -> List[Action]:
     # Optional seconds between camera starts (USB 3.2 cameras that fail to connect when
     # started together); 0, the default, starts them all at once.
     stagger = float(rs_config.get('startup_stagger_s', 0.0))
+    # Fixed colour exposure/gain (null keeps auto exposure)
+    rgb_exposure = rs_config.get('rgb_exposure')
+    rgb_gain = rs_config.get('rgb_gain')
+    rgb_params = {}
+    if rgb_exposure is not None:
+        rgb_params['rgb_camera.enable_auto_exposure'] = False
+        rgb_params['rgb_camera.exposure'] = int(rgb_exposure)
+    if rgb_gain is not None:
+        rgb_params['rgb_camera.gain'] = int(rgb_gain)
+    if rgb_params:
+        nodes.append(LogInfo(msg=f"[Fertilizer] colour sensor: {rgb_params}"))
 
 
 
@@ -100,6 +111,7 @@ def launch_setup(context: LaunchContext) -> List[Action]:
                     'enable_depth': False,
                     'depth_module.laser_power': 0.0,
                     'depth_module.emitter_enabled': False,
+                    **rgb_params,
                 }
             ],
             remappings=[
@@ -129,12 +141,21 @@ def launch_setup(context: LaunchContext) -> List[Action]:
             #additional_env={'LD_PRELOAD': '/lib/x86_64-linux-gnu/libpthread.so.0'},
         ))
         # YOLO AI classification inference node
+        yolo_cfg = config.get('yolo') or {}
+        infer_params = {
+            'max_batch_size': n,
+            'fallback_engine_path': yolo_cfg.get('fallback_engine_path') or '',
+            'blur_threshold': float(yolo_cfg.get('blur_threshold', 0.561)),
+            'blur_window': int(yolo_cfg.get('blur_window', 30)),
+        }
+        if yolo_cfg.get('engine_path'):
+            infer_params['engine_path'] = yolo_cfg['engine_path']
         nodes.append(Node(
             package = 'cv_inference',
             executable = 'inference_node',
             name = 'Yolo_InferenceNode_v2',
             output = 'screen',
-            parameters=[{'max_batch_size': n}],
+            parameters=[infer_params],
             respawn=respawn,
             respawn_delay=respawn_delay,
             emulate_tty=emulate_tty,

@@ -33,6 +33,17 @@ realsense:
   # Enable TTY terminal emulation for serial communication
   emulate_tty: true
 
+  # Colour exposure of the D555. null (default) keeps the camera's auto exposure, as before.
+  # Auto exposure lengthens the exposure in low light, and the resulting motion blur is what
+  # makes the YOLO model call bare soil "cane" (blurred day session and night passes). A fixed
+  # value disables auto exposure. Units are the driver's: check the range with
+  #   ros2 param describe /camera1/camera1 rgb_camera.exposure
+  # Target: under ~3 ms (about 2 px of blur at 10 km/h, 0.38 cm/px), so the blur_median the
+  # inference node publishes stays near its daylight value (~0.8). If the image is too dark,
+  # raise rgb_gain or the lights, not the exposure.
+  rgb_exposure: null
+  rgb_gain: null
+
   # Optional staggered start: camera i starts (i-1)*startup_stagger_s seconds after launch.
   # 0 (default) starts all cameras at once, as before. Try e.g. 5.0 if the USB 3.2 cameras
   # fail to connect when started together.
@@ -49,6 +60,17 @@ realsense:
 # Both can be overridden at launch: ros2 launch fertilizer launch_nodes.py perception:=both
 perception: yolo
 valve_source: yolo
+
+# YOLO inference node (perception: yolo | both)
+yolo:
+  # "" keeps the node's default engine (cv_inference src/best.engine)
+  engine_path: ""
+  # Pass-condition switch: while the median blur ratio of a camera's last blur_window frames
+  # is below blur_threshold, that camera is decided by this second engine (the model trained
+  # on ExG labels, plant_fallback.engine). "" disables the switch.
+  fallback_engine_path: ""
+  blur_threshold: 0.561
+  blur_window: 30
 
 # ------------------------------------------------------------------------------
 # Index pipeline (perception: index | both)
