@@ -147,6 +147,7 @@ def launch_setup(context: LaunchContext) -> List[Action]:
             'fallback_engine_path': yolo_cfg.get('fallback_engine_path') or '',
             'blur_threshold': float(yolo_cfg.get('blur_threshold', 0.561)),
             'blur_window': int(yolo_cfg.get('blur_window', 30)),
+            'plant_threshold': float(yolo_cfg.get('plant_threshold', 0.5)),
         }
         if yolo_cfg.get('engine_path'):
             infer_params['engine_path'] = yolo_cfg['engine_path']

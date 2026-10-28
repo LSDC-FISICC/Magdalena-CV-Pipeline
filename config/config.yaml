@@ -71,6 +71,9 @@ yolo:
   fallback_engine_path: ""
   blur_threshold: 0.561
   blur_window: 30
+  # p(plant) >= plant_threshold opens the valves. 0.5 = argmax (as before). With the E12 model,
+  # 0.3 gave 91.1 % at night (89.7 % at 0.5) and 96.3 % by day, and leaves less cane without vinasse.
+  plant_threshold: 0.5
 
 # ------------------------------------------------------------------------------
 # Index pipeline (perception: index | both)
